@@ -43,5 +43,6 @@ nfl-tui -i 5
 
 *   `j` / `Down`: Next Game
 *   `k` / `Up`: Previous Game
+*   `c`: Switch League (NFL <-> NCAA)
 *   `l`: Toggle Logos
 *   `q`: Quit

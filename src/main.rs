@@ -29,8 +29,9 @@ struct App {
     events: Vec<GameEvent>,
     state: ListState,
     filter_live: bool,
-    logos: HashMap<String, DynamicImage>,
-    show_logos: bool,
+    pub logos: HashMap<String, DynamicImage>,
+    pub show_logos: bool,
+    pub league_label: String,
 }
 
 impl Default for App {
@@ -42,6 +43,7 @@ impl Default for App {
             filter_live: false,
             logos: HashMap::new(),
             show_logos: true,
+            league_label: "loading...".to_string(),
         }
     }
 }
@@ -160,14 +162,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client_clone = client.clone();
     let tx_clone = tx.clone();
     let interval_secs = args.interval;
-    let league = if args.ncaa { "college-football" } else { "nfl" }.to_string();
+    
+    // Shared state for league
+    let initial_league = if args.ncaa { "college-football" } else { "nfl" }.to_string();
+    let league_state = Arc::new(std::sync::Mutex::new(initial_league));
+    let league_state_clone = league_state.clone();
+
+    // Channel to signal immediate refresh
+    let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Spawn background data fetching task
     tokio::spawn(async move {
         let mut fetched_logos: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         loop {
-            if let Ok(data) = client_clone.fetch_scoreboard(&league).await {
+            // Get current league
+            let current_league = {
+                let guard = league_state_clone.lock().unwrap();
+                guard.clone()
+            };
+
+            if let Ok(data) = client_clone.fetch_scoreboard(&current_league).await {
                 // Check for logos
                 for event in &data.events {
                     for comp in &event.competitions {
@@ -191,12 +206,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 
                 let _ = tx_clone.send((data.events, None)).await;
             }
-            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            
+            // scalar ref to interval for sleep
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(interval_secs)) => {},
+                _ = refresh_rx.recv() => {
+                    // Woke up early to refresh!
+                }
+            }
         }
     });
 
     // Run app loop
-    let res = run_app(&mut terminal, &mut app, &mut rx).await;
+    let res = run_app(&mut terminal, &mut app, &mut rx, league_state, refresh_tx).await;
 
     // Restore terminal
     disable_raw_mode()?;
@@ -218,8 +240,20 @@ async fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     rx: &mut mpsc::Receiver<(Vec<GameEvent>, Option<(String, DynamicImage)>)>,
+    league_state: Arc<std::sync::Mutex<String>>,
+    refresh_tx: tokio::sync::mpsc::Sender<()>,
 ) -> io::Result<()> {
     loop {
+        // Pass current league name to UI for display (hacky, or add field to App?)
+        // Let's add a temporary field or just assume app doesn't know yet.
+        // Actually, we should probably add `pub current_league: String` to `App` struct for UI to read.
+        // For now, let's just make `ui` read it from lock if we pass it, but better: 
+        // Update `app.league_label` inside the loop here?
+        {
+             let g = league_state.lock().unwrap();
+             app.league_label = g.clone();
+        }
+
         terminal.draw(|f| ui(f, app))?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -227,7 +261,23 @@ async fn run_app<B: Backend>(
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('l') => app.show_logos = !app.show_logos,
-                    KeyCode::Char('f') => app.toggle_live_filter(), // 'f' for filter, as 'l' is now for logos
+                    KeyCode::Char('f') => app.toggle_live_filter(), 
+                    KeyCode::Char('c') => {
+                        // Toggle League
+                        {
+                            let mut guard = league_state.lock().unwrap();
+                            if *guard == "nfl" {
+                                *guard = "college-football".to_string();
+                            } else {
+                                *guard = "nfl".to_string();
+                            }
+                        }
+                        // Clear events to avoid confusion while loading
+                        app.events.clear();
+                        app.state.select(None);
+                        // Signal refresh
+                        let _ = refresh_tx.try_send(());
+                    }
                     KeyCode::Down | KeyCode::Char('j') => app.next(),
                     KeyCode::Up | KeyCode::Char('k') => app.previous(),
                     _ => {}
@@ -532,8 +582,10 @@ fn draw_main_panel(f: &mut Frame, app: &App, area: Rect) {
 
                 // Middle
                 let status_color = if game.status.type_field.state == "in" { Color::Red } else { Color::Gray };
+                
+                let league_display = if app.league_label == "college-football" { "NCAA" } else { "NFL" };
                 let mid_text = vec![
-                    Line::from(""),
+                    Line::from(Span::styled(league_display, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
                     Line::from(Span::styled("VS", Style::default().add_modifier(Modifier::ITALIC))),
                     Line::from(""),
                     Line::from(Span::styled(&game.status.display_clock, Style::default().fg(status_color).add_modifier(Modifier::BOLD))),
