@@ -32,6 +32,7 @@ struct App {
     pub logos: HashMap<String, DynamicImage>,
     pub show_logos: bool,
     pub league_label: String,
+    pub show_sidebar: bool,
 }
 
 impl Default for App {
@@ -44,6 +45,7 @@ impl Default for App {
             logos: HashMap::new(),
             show_logos: true,
             league_label: "loading...".to_string(),
+            show_sidebar: true,
         }
     }
 }
@@ -262,6 +264,7 @@ async fn run_app<B: Backend>(
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('l') => app.show_logos = !app.show_logos,
                     KeyCode::Char('f') => app.toggle_live_filter(), 
+                    KeyCode::Char('b') => app.show_sidebar = !app.show_sidebar,
                     KeyCode::Char('c') => {
                         // Toggle League
                         {
@@ -302,19 +305,27 @@ async fn run_app<B: Backend>(
 
 fn ui(f: &mut Frame, app: &mut App) {
     let size = f.area();
+    
+    let constraints = if app.show_sidebar {
+        vec![Constraint::Percentage(25), Constraint::Percentage(75)]
+    } else {
+        vec![Constraint::Min(0)]
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(
-            [
-                Constraint::Percentage(25),
-                Constraint::Percentage(75),
-            ]
-            .as_ref(),
-        )
+        .constraints(constraints)
         .split(size);
 
-    draw_sidebar(f, app, chunks[0]);
-    draw_main_panel(f, app, chunks[1]);
+    if app.show_sidebar {
+        draw_sidebar(f, app, chunks[0]);
+        // Safe because constraints enusres we have 2 chunks if show_sidebar is true
+        if chunks.len() > 1 {
+            draw_main_panel(f, app, chunks[1]);
+        }
+    } else {
+        draw_main_panel(f, app, chunks[0]);
+    }
 }
 
 fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
