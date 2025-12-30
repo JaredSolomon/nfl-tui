@@ -16,12 +16,12 @@ A terminal-based (TUI) live scoreboard for the NFL and NCAA College Football.
 
 ### From Source
 ```bash
-cargo install --git https://github.com/YOUR_USERNAME/nfl-tui
+cargo install --git https://github.com/jaredsolomon/nfl-tui
 ```
 
 ### Manual Build
 ```bash
-git clone https://github.com/YOUR_USERNAME/nfl-tui
+git clone https://github.com/jaredsolomon/nfl-tui
 cd nfl-tui
 cargo run --release
 ```
